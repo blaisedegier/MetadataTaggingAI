@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MetadataTaggingAI\MetadataTaggingAI.csproj" />
+    <ProjectReference Include="..\..\tools\DropboxSharedLinkDownloader\DropboxSharedLinkDownloader.csproj" />
   </ItemGroup>
 
   <ItemGroup>

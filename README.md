@@ -98,8 +98,16 @@ environment; the link and the output folder can also be passed as arguments. Out
 dotnet run --project tools/DropboxSharedLinkDownloader -- "https://www.dropbox.com/scl/fo/..." ./kruger-2024
 ```
 
-The tests cover folder tag extraction, image detection, the IPTC and XMP updates, and a round trip
-that writes keywords into a generated JPEG and reads them back. None of them call Azure or Dropbox.
+Each file is streamed into `<name>.part` and renamed once it is complete, so an interrupted
+download never leaves a truncated file under its real name. Names Windows cannot store (characters
+such as `:` or `?`, trailing dots or spaces, device names such as `CON`) are rewritten with `_`, and
+the new name is printed. If two entries in one folder end up with the same local name ignoring
+case, the second is skipped rather than allowed to overwrite the first. A file or folder that fails
+is reported and the rest carry on; the run ends with the list of failures and a non-zero exit code.
+
+The tests cover folder tag extraction, image detection, the IPTC and XMP updates, round trips that
+write keywords into a generated JPEG (in place and as a copy) and read them back, and the
+downloader's file name rules. None of them call Azure or Dropbox.
 
 ## Tech
 
@@ -124,4 +132,5 @@ that writes keywords into a generated JPEG and reads them back. None of them cal
 - Images are processed one at a time. Azure calls get only the Azure SDK's default retry policy,
   with no extra handling for throttling.
 - The Dropbox downloader has not been run against a live shared link in its current form, needs a
-  user access token rather than an OAuth flow, and re-downloads everything on each run.
+  user access token rather than an OAuth flow, and re-downloads everything on each run. A failed
+  file is not retried; run it again to fetch what was missed.
