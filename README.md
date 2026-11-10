@@ -1,198 +1,112 @@
-# MetadataTaggingAI 🏷️
+# MetadataTaggingAI
 
-Automatically tag images with rich, searchable keywords by combining **folder-based semantics** with **Azure AI Vision** — then embed those keywords directly into industry-standard **IPTC** and **XMP** metadata.
+A .NET console tool that keywords a folder of photos from their folder names and Azure AI Vision, and writes the keywords into each file.
 
-Built for photographers, digital asset managers, and anyone who wants their images to be instantly discoverable without hours of manual keywording.
+[![CI](https://github.com/blaisedegier/MetadataTaggingAI/actions/workflows/ci.yml/badge.svg)](https://github.com/blaisedegier/MetadataTaggingAI/actions/workflows/ci.yml)
 
-## Table of Contents
+## What it does
 
-- [How It Works](#how-it-works)
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Getting Started](#getting-started)
-- [Configuration](#configuration)
-- [Running](#running)
-- [Running Tests](#running-tests)
-- [Supported Formats](#supported-formats)
-- [Demo Projects](#demo-projects)
+It was built to tag a safari lodge's photo library, where photographers already sort shoots into
+folders such as `kruger-2024/Big-Cats/`. For every image under a root folder it:
 
-## How It Works
+- turns the root folder's name and every folder below it into keywords (`Kruger`, `2024`, `Big`, `Cats`),
+- asks Azure AI Vision what is in the picture (`Lion`, `Grass`, `Wildlife`),
+- merges the two lists, drops case-insensitive duplicates, and writes the result into the file as
+  IPTC Keywords and XMP `dc:subject`, so photo managers that read either field can search on them.
 
-```text
-┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
-│  Folder Hierarchy │     │  Azure AI Vision  │     │  Image Metadata   │
-│                   │     │                   │     │                   │
-│  /Animals/        │────>│  Analyze image    │────>│  IPTC Keywords    │
-│   Big-Cats/       │     │  for visual tags  │     │  XMP dc:subject   │
-│    lion.jpg       │     │                   │     │                   │
-└───────────────────┘     └───────────────────┘     └───────────────────┘
-   Tags: "Animals",        Tags: "Lion",              All tags merged &
-   "Big", "Cats"           "Wildlife", "Cat"          written into file
-```
+A `--dry-run` prints the keywords each image would get and changes no file. It still calls Azure
+when a key is configured.
 
-1. **Folder hierarchy extraction:** Directory names in the image path are parsed into tags. Separators like `-`, `+`, `_`, `.` are split and each segment is title-cased.
-2. **Azure AI Vision analysis:** Each image is sent to Azure's Image Analysis API which returns content-based visual tags (objects, scenes, concepts).
-3. **Tag merging:** Folder-derived and AI-generated tags are combined and deduplicated.
-4. **Metadata embedding:** The final tag set is written into the image file as both **IPTC Keywords** and **XMP Dublin Core subjects** (`dc:subject`), using Magick.NET with full profile preservation.
+Two small tools sit beside it:
 
-## Features
+- `tools/MetadataInspector` prints the IPTC Keywords and XMP `dc:subject` already stored in an image.
+- `tools/DropboxSharedLinkDownloader` downloads everything behind a Dropbox shared folder link,
+  keeping the folder structure, so a shoot delivered by link can be tagged locally.
 
-- **Dual tagging strategy:** Combines organizational context (folder names) with AI-detected visual content for richer, more accurate keywords.
-- **Industry-standard metadata:** Writes both IPTC Keywords and XMP `dc:subject` tags, ensuring compatibility with Adobe Lightroom, Bridge, Capture One, and other DAM tools.
-- **Non-destructive writes:** Uses Magick.NET's profile preservation to keep existing metadata (EXIF, color profiles, etc.) intact when writing tags.
-- **Recursive processing:** Processes entire folder trees in a single run.
-- **Smart text normalization:** Handles mixed case, special characters, and separator conventions (kebab-case, snake_case, etc.) and normalizes to Title Case.
-- **Deduplication:** Prevents duplicate keywords via case-insensitive comparison.
+## How it works
 
-## Tech Stack
+`Program` walks the root folder recursively and, for each file `FolderTagExtractor.IsImageFile`
+accepts (`.jpg`, `.jpeg`, `.png`, `.gif`, `.tiff`, `.bmp`), collects tags from two sources:
 
-| Component            | Technology                                                                                                                                                              |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime              | .NET 8 / C# 12                                                                                                                                                          |
-| AI Vision            | [Azure AI Vision — Image Analysis](https://learn.microsoft.com/en-us/azure/ai-services/computer-vision/overview-image-analysis) (`Azure.AI.Vision.ImageAnalysis` 1.0.0) |
-| Image I/O & Metadata | [Magick.NET](https://github.com/dlemstra/Magick.NET) (Q16-AnyCPU 14.4.0)                                                                                                |
-| XMP Handling         | `System.Xml.Linq` (built-in)                                                                                                                                            |
-| Testing              | xUnit 2.9.3                                                                                                                                                             |
-| Configuration        | `Microsoft.Extensions.Configuration.Json`                                                                                                                               |
+- `FolderTagExtractor.GetFolderHierarchyTags` takes the path relative to the root, prepends the
+  root folder's own name, splits each folder name on `-`, `+`, `_` and `.`, and title-cases the
+  parts with the invariant culture so results do not depend on the machine's locale. Spaces are
+  kept, so `big cats` stays one tag.
+- `AzureVisionTagger` sends the image to Image Analysis 4.0 with the `Tags` feature. One
+  `ImageAnalysisClient` is created per run and reused for every image.
 
-## Project Structure
+`ImageMetadataWriter` then opens the image with Magick.NET, clears the existing IPTC Keyword values
+and the existing `rdf:Bag` under XMP `dc:subject`, writes the merged list into both, and saves the
+file in place. XMP is edited as an `XDocument`; an image with no XMP gets a new packet with an
+`rdf:Description` to hold the subjects.
 
-```text
-MetadataTaggingAI/
-├── PrototypeV1/
-│   ├── PrototypeV1.sln                 # Main solution
-│   ├── PrototypeV1/
-│   │   ├── PrototypeV1.csproj          # Console app project
-│   │   ├── Program.cs                  # ImageProcessor — core tagging pipeline
-│   │   └── ImageMetadataWriter.cs      # IPTC + XMP metadata writer
-│   └── ImageProcessorTests/
-│       ├── ImageProcessorTests.csproj   # Test project
-│       └── UnitTest.cs                  # xUnit tests for tagging & metadata
-├── Demo/                                # Standalone experiments & utilities
-│   ├── Tester/                          # Azure Image Analysis tag listing
-│   ├── XMP/                             # XMP/IPTC metadata reader
-│   ├── Dropbox/                         # Dropbox shared folder downloader
-│   └── Demo/                            # Dropbox API exploration
-├── .gitignore
-└── README.md
-```
+If Azure or the write fails for an image, the error is printed, that file is left as it was, and the
+run carries on; the exit code is non-zero when anything was skipped.
 
-### Key Files
+## Running it
 
-| File                                 | Responsibility                                                                                         |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `PrototypeV1/Program.cs`             | Entry point & orchestration — scans folders, calls Azure Vision, merges tags, triggers metadata writes |
-| `PrototypeV1/ImageMetadataWriter.cs` | Reads/writes IPTC and XMP metadata using Magick.NET with full profile preservation                     |
-| `ImageProcessorTests/UnitTest.cs`    | Unit tests for folder tag extraction, image file detection, IPTC updates, and XMP profile creation     |
+Prerequisites: the .NET 10 SDK, and an Azure AI Vision (Computer Vision) resource for its endpoint
+and key. A dry run works without Azure and shows folder tags only.
 
-## Prerequisites
-
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or later
-- An **Azure AI Services** resource with the **Computer Vision / Image Analysis** API enabled
-  - You'll need the **endpoint URL** and an **API key** ([Quickstart guide](https://learn.microsoft.com/en-us/azure/ai-services/computer-vision/quickstarts-sdk/image-analysis-client-library))
-
-## Getting Started
-
-1. **Clone the repository**
-
-   ```bash
-   git clone https://github.com/<your-username>/MetadataTaggingAI.git
-   cd MetadataTaggingAI
-   ```
-
-2. **Restore dependencies**
-
-   ```bash
-   dotnet restore PrototypeV1/PrototypeV1.sln
-   ```
-
-3. **Create your configuration file**
-
-   Create `PrototypeV1/PrototypeV1/appsettings.json` (this file is git-ignored for security):
-
-   ```json
-   {
-     "ApiKey": "<your-azure-vision-api-key>",
-     "ApiEndpoint": "https://<your-resource-name>.cognitiveservices.azure.com/"
-   }
-   ```
-
-4. **Add images**
-
-   Place your image folders under an `Images/` directory (also git-ignored). The tool processes the first subdirectory it finds, so structure it like:
-
-   ```text
-   Images/
-   └── MyCollection/
-       ├── Animals/
-       │   ├── Big-Cats/
-       │   │   └── lion.jpg
-       │   └── Birds/
-       │       └── eagle.png
-       └── Landscapes/
-           └── sunset.jpg
-   ```
-
-## Configuration
-
-The app reads from `appsettings.json` at runtime:
-
-| Key           | Description                  | Example                                           |
-| ------------- | ---------------------------- | ------------------------------------------------- |
-| `ApiKey`      | Azure AI Vision API key      | `a1b2c3d4e5f6...`                                 |
-| `ApiEndpoint` | Azure AI Vision endpoint URL | `https://myresource.cognitiveservices.azure.com/` |
-
-The target image directory is configured via the `TARGET_DIR` constant in `Program.cs` (defaults to `~/Images`).
-
-## Running
+Configuration is read from `appsettings.json` beside the executable, then from environment variables
+of the same names. Copy the example and fill it in:
 
 ```bash
-dotnet run --project PrototypeV1/PrototypeV1/PrototypeV1.csproj
+cp src/MetadataTaggingAI/appsettings.example.json src/MetadataTaggingAI/appsettings.json
 ```
 
-The app will:
+| Key           | Meaning                                                                    |
+| ------------- | -------------------------------------------------------------------------- |
+| `ApiKey`      | Azure AI Vision key                                                        |
+| `ApiEndpoint` | Azure AI Vision endpoint, e.g. `https://name.cognitiveservices.azure.com/` |
+| `ImageRoot`   | Folder to tag when none is given on the command line                       |
 
-1. Scan the configured image directory recursively
-2. For each image, extract tags from the folder hierarchy
-3. Analyze each image with Azure AI Vision to get visual tags
-4. Merge all tags and write them as IPTC Keywords and XMP `dc:subject` into the image file
-5. Log progress to the console
-
-## Running Tests
+`appsettings.json` is gitignored. The root folder comes from the first argument, then `ImageRoot`,
+then `./Images`. Point it at the shoot folder itself, because that folder's name becomes a tag.
 
 ```bash
-dotnet test PrototypeV1/PrototypeV1.sln
+dotnet build MetadataTaggingAI.slnx
+dotnet test MetadataTaggingAI.slnx
+
+# See what each image would get, without touching any file
+dotnet run --project src/MetadataTaggingAI -- "/photos/kruger-2024" --dry-run
+
+# Write the keywords (needs ApiKey and ApiEndpoint)
+dotnet run --project src/MetadataTaggingAI -- "/photos/kruger-2024"
+
+# Check what landed in a file
+dotnet run --project tools/MetadataInspector -- "/photos/kruger-2024/Big-Cats/lion.jpg"
 ```
 
-The test suite covers:
+The Dropbox downloader takes `AccessToken`, `SharedLink` and `OutputDirectory` from its own
+`appsettings.json` (see `tools/DropboxSharedLinkDownloader/appsettings.example.json`) or the
+environment; the link and the output folder can also be passed as arguments. Output defaults to
+`./dropbox-download`.
 
-- **Folder hierarchy tag extraction:** nested folders, mixed case, separators, edge cases
-- **Image file detection:** supported vs. unsupported extensions
-- **IPTC keyword management:** adding, replacing, and clearing keywords
-- **XMP profile handling:** creating new profiles and updating existing ones
+```bash
+dotnet run --project tools/DropboxSharedLinkDownloader -- "https://www.dropbox.com/scl/fo/..." ./kruger-2024
+```
 
-## Supported Formats
+The tests cover folder tag extraction, image detection, the IPTC and XMP updates, and a round trip
+that writes keywords into a generated JPEG and reads them back. None of them call Azure or Dropbox.
 
-| Format | Extension       | Supported |
-| ------ | --------------- | --------- |
-| JPEG   | `.jpg`, `.jpeg` | Yes       |
-| PNG    | `.png`          | Yes       |
-| GIF    | `.gif`          | Yes       |
-| TIFF   | `.tiff`         | Yes       |
-| BMP    | `.bmp`          | Yes       |
-| WebP   | `.webp`         | No        |
+## Tech
 
-## Demo Projects
+.NET 10, Azure.AI.Vision.ImageAnalysis, Magick.NET, Microsoft.Extensions.Configuration, Dropbox.Api, xUnit.
 
-The `Demo/` folder contains standalone experiments used during development:
+## Known limitations
 
-| Project     | Description                                                        |
-| ----------- | ------------------------------------------------------------------ |
-| **Tester**  | Lists Azure Image Analysis tags for images in a folder             |
-| **XMP**     | Reads and displays existing XMP and IPTC metadata from image files |
-| **Dropbox** | Downloads images recursively from a Dropbox shared link            |
-| **Demo**    | Dropbox API exploration and authentication testing                 |
-
-Each demo has its own `.sln` and can be run independently.
+- **Existing keywords are replaced, not merged.** Any IPTC Keywords or XMP `dc:subject` entries a
+  photographer added by hand are removed on write. Run a `--dry-run` first and keep a copy of the
+  originals.
+- **Files are re-encoded.** Magick.NET decodes and re-saves each image, so JPEGs go through a
+  second lossy compression and the file bytes change even where the picture looks the same.
+- Only JPEG has been exercised end to end. Whether IPTC and XMP survive in PNG, GIF, TIFF and BMP
+  depends on what ImageMagick writes for each format; BMP has nowhere to store them, and an
+  animated GIF is read as its first frame only.
+- Compatibility with Lightroom, Bridge or other photo managers has not been tested.
+- Writes need an Azure AI Vision resource, and every image is one billable call. Tags are requested in
+  the service's default language (English), and no confidence threshold is applied.
+- Images are processed one at a time, with no retry on Azure throttling.
+- The Dropbox downloader has not been run against a live shared link in its current form, needs a
+  user access token rather than an OAuth flow, and re-downloads everything on each run.
