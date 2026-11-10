@@ -6,15 +6,17 @@ A .NET console tool that keywords a folder of photos from their folder names and
 
 ## What it does
 
-It was built to tag a safari lodge's photo library, where photographers already sort shoots into
-folders such as `kruger-2024/Big-Cats/`. For every image under a root folder it:
+It is meant for photo libraries where photographers already sort shoots into folders such as
+`kruger-2024/Big-Cats/`. For every image under a root folder it:
 
 - turns the root folder's name and every folder below it into keywords (`Kruger`, `2024`, `Big`, `Cats`),
 - asks Azure AI Vision what is in the picture (`Lion`, `Grass`, `Wildlife`),
 - merges the two lists, drops case-insensitive duplicates, and writes the result into the file as
   IPTC Keywords and XMP `dc:subject`, so photo managers that read either field can search on them.
 
-A `--dry-run` prints the keywords each image would get and changes no file. It still calls Azure
+By default the keywords are written into the original files. `--output <folder>` instead writes a
+tagged copy of each image to that folder, in the same folder layout, and only reads the originals.
+A `--dry-run` prints the keywords each image would get and writes nothing. It still calls Azure
 when a key is configured.
 
 Two small tools sit beside it:
@@ -73,12 +75,19 @@ dotnet test MetadataTaggingAI.slnx
 # See what each image would get, without touching any file
 dotnet run --project src/MetadataTaggingAI -- "/photos/kruger-2024" --dry-run
 
-# Write the keywords (needs ApiKey and ApiEndpoint)
-dotnet run --project src/MetadataTaggingAI -- "/photos/kruger-2024"
+# Write tagged copies to another folder (needs ApiKey and ApiEndpoint); the originals are only read
+dotnet run --project src/MetadataTaggingAI -- "/photos/kruger-2024" --output "/photos/tagged/kruger-2024"
 
 # Check what landed in a file
-dotnet run --project tools/MetadataInspector -- "/photos/kruger-2024/Big-Cats/lion.jpg"
+dotnet run --project tools/MetadataInspector -- "/photos/tagged/kruger-2024/Big-Cats/lion.jpg"
+
+# Write the keywords into the originals themselves
+dotnet run --project src/MetadataTaggingAI -- "/photos/kruger-2024"
 ```
+
+Prefer `--output`. Writing into the originals replaces their keywords and re-encodes them (see
+below), so back the folder up first if you do. The output folder must be outside the root folder,
+so the copies are never picked up by a later run.
 
 The Dropbox downloader takes `AccessToken`, `SharedLink` and `OutputDirectory` from its own
 `appsettings.json` (see `tools/DropboxSharedLinkDownloader/appsettings.example.json`) or the
@@ -99,16 +108,20 @@ that writes keywords into a generated JPEG and reads them back. None of them cal
 ## Known limitations
 
 - **Existing keywords are replaced, not merged.** Any IPTC Keywords or XMP `dc:subject` entries a
-  photographer added by hand are removed on write. Run a `--dry-run` first and keep a copy of the
-  originals.
+  photographer added by hand are dropped from the written file. Run a `--dry-run` first, and use
+  `--output` or keep a copy of the originals.
 - **Files are re-encoded.** Magick.NET decodes and re-saves each image, so JPEGs go through a
   second lossy compression and the file bytes change even where the picture looks the same.
+  Magick.NET has no way to rewrite only a JPEG's metadata segments (its lossless `JpegOptimizer`
+  recompresses the existing data but cannot add profiles), so avoiding this would need a separate
+  metadata library or ExifTool.
 - Only JPEG has been exercised end to end. Whether IPTC and XMP survive in PNG and TIFF depends on
   what ImageMagick writes for each format. GIF and BMP files are skipped, because BMP has nowhere to
   store keywords and re-saving an animated GIF would keep only its first frame.
 - Compatibility with Lightroom, Bridge or other photo managers has not been tested.
 - Writes need an Azure AI Vision resource, and every image is one billable call. Tags are requested in
   the service's default language (English), and no confidence threshold is applied.
-- Images are processed one at a time, with no retry on Azure throttling.
+- Images are processed one at a time. Azure calls get only the Azure SDK's default retry policy,
+  with no extra handling for throttling.
 - The Dropbox downloader has not been run against a live shared link in its current form, needs a
   user access token rather than an OAuth flow, and re-downloads everything on each run.

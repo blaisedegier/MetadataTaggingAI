@@ -4,7 +4,7 @@ namespace MetadataTaggingAI
 {
     public static class Program
     {
-        private const string Usage = "Usage: MetadataTaggingAI [root-folder] [--dry-run]";
+        private const string Usage = "Usage: MetadataTaggingAI [root-folder] [--output <folder>] [--dry-run]";
 
         public static async Task<int> Main(string[] args)
         {
@@ -14,8 +14,28 @@ namespace MetadataTaggingAI
                 return 0;
             }
 
-            var dryRun = args.Contains("--dry-run");
-            var positional = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToList();
+            var dryRun = false;
+            string? outputArgument = null;
+            var positional = new List<string>();
+            for (var i = 0; i < args.Length; i++)
+            {
+                switch (args[i])
+                {
+                    case "--dry-run":
+                        dryRun = true;
+                        break;
+                    case "--output" when i + 1 < args.Length:
+                        outputArgument = args[++i];
+                        break;
+                    case var option when option.StartsWith("--", StringComparison.Ordinal):
+                        Console.Error.WriteLine(Usage);
+                        return 2;
+                    default:
+                        positional.Add(args[i]);
+                        break;
+                }
+            }
+
             if (positional.Count > 1)
             {
                 Console.Error.WriteLine(Usage);
@@ -40,6 +60,24 @@ namespace MetadataTaggingAI
                 return 1;
             }
 
+            // With --output, tagged copies go to the output folder in the same layout and the
+            // originals are only read. The output folder may not sit inside the root, or the copies
+            // would be picked up and tagged on the next run.
+            string? outputFolder = null;
+            if (outputArgument is not null)
+            {
+                outputFolder = Path.GetFullPath(outputArgument);
+                var relativeToRoot = Path.GetRelativePath(rootFolder, outputFolder);
+                var outsideRoot = relativeToRoot == ".."
+                    || relativeToRoot.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                    || Path.IsPathRooted(relativeToRoot);
+                if (!outsideRoot)
+                {
+                    Console.Error.WriteLine($"The output folder must be outside the root folder: {outputFolder}");
+                    return 1;
+                }
+            }
+
             var endpoint = NullIfBlank(configuration["ApiEndpoint"]);
             var apiKey = NullIfBlank(configuration["ApiKey"]);
             AzureVisionTagger? tagger = null;
@@ -58,17 +96,24 @@ namespace MetadataTaggingAI
             }
 
             Console.WriteLine($"{(dryRun ? "Dry run over" : "Tagging")} {rootFolder}");
-            var failures = await ProcessFolderAsync(rootFolder, tagger, dryRun);
+            if (outputFolder is not null && !dryRun)
+            {
+                Console.WriteLine($"Writing tagged copies to {outputFolder}; originals are not modified.");
+            }
+
+            var failures = await ProcessFolderAsync(rootFolder, outputFolder, tagger, dryRun);
             Console.WriteLine(failures == 0 ? "Done." : $"Done with {failures} failure(s).");
             return failures == 0 ? 0 : 1;
         }
 
-        // Tags every image under the root folder. A file that fails is reported and left untouched.
-        private static async Task<int> ProcessFolderAsync(string rootFolder, AzureVisionTagger? tagger, bool dryRun)
+        // Tags every image under the root folder, in place or as a copy under outputFolder.
+        // A file that fails is reported and left untouched.
+        private static async Task<int> ProcessFolderAsync(string rootFolder, string? outputFolder, AzureVisionTagger? tagger, bool dryRun)
         {
             var failures = 0;
             var imageFiles = Directory.EnumerateFiles(rootFolder, "*.*", SearchOption.AllDirectories)
-                                      .Where(FolderTagExtractor.IsImageFile);
+                                      .Where(FolderTagExtractor.IsImageFile)
+                                      .ToList();
 
             foreach (var imagePath in imageFiles)
             {
@@ -87,7 +132,8 @@ namespace MetadataTaggingAI
                     }
                     else
                     {
-                        ImageMetadataWriter.WriteMetadata(imagePath, tags);
+                        var destination = outputFolder is null ? null : Path.Combine(outputFolder, relative);
+                        ImageMetadataWriter.WriteMetadata(imagePath, tags, destination);
                         Console.WriteLine($"Tagged {relative}: {string.Join(", ", tags)}");
                     }
                 }
