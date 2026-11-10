@@ -140,36 +140,73 @@ namespace MetadataTaggingAI.Tests
         }
     }
 
-    public class WriteMetadataTests
+    public sealed class WriteMetadataTests : IDisposable
     {
+        private readonly string _folder = Directory.CreateTempSubdirectory("metadata-tagging-").FullName;
+
+        public void Dispose() => Directory.Delete(_folder, recursive: true);
+
+        private string CreateJpeg(string name)
+        {
+            var path = Path.Combine(_folder, name);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            using var blank = new MagickImage(MagickColors.SkyBlue, 32, 32);
+            blank.Write(path, MagickFormat.Jpeg);
+            return path;
+        }
+
+        private static (List<string> Iptc, List<string> Xmp) ReadKeywords(string path)
+        {
+            using var image = new MagickImage(path);
+            var iptc = image.GetIptcProfile();
+            var xmp = image.GetXmpProfile();
+            Assert.NotNull(iptc);
+            Assert.NotNull(xmp);
+            return (
+                iptc!.Values.Where(v => v.Tag == IptcTag.Keyword).Select(v => v.Value).ToList(),
+                xmp!.ToXDocument()!.Descendants().Where(e => e.Name.LocalName == "li").Select(e => e.Value).ToList());
+        }
+
         [Fact]
         public void WritesIptcAndXmpKeywordsIntoAJpeg()
         {
-            var path = Path.Combine(Path.GetTempPath(), $"metadata-tagging-{Guid.NewGuid():N}.jpg");
-            try
-            {
-                using (var blank = new MagickImage(MagickColors.SkyBlue, 32, 32))
-                {
-                    blank.Write(path, MagickFormat.Jpeg);
-                }
+            var path = CreateJpeg("lion.jpg");
+            var tags = new List<string> { "Wildlife", "Lion" };
 
-                var tags = new List<string> { "Wildlife", "Lion" };
-                ImageMetadataWriter.WriteMetadata(path, tags);
+            ImageMetadataWriter.WriteMetadata(path, tags);
 
-                using var image = new MagickImage(path);
-                var iptc = image.GetIptcProfile();
-                var xmp = image.GetXmpProfile();
+            var (iptc, xmp) = ReadKeywords(path);
+            Assert.Equal(tags, iptc);
+            Assert.Equal(tags, xmp);
+            Assert.Equal(new[] { path }, Directory.GetFiles(_folder));
+        }
 
-                Assert.NotNull(iptc);
-                Assert.NotNull(xmp);
-                Assert.Equal(tags, iptc!.Values.Where(v => v.Tag == IptcTag.Keyword).Select(v => v.Value).ToList());
-                Assert.Equal(tags, xmp!.ToXDocument()!.Descendants()
-                    .Where(e => e.Name.LocalName == "li").Select(e => e.Value).ToList());
-            }
-            finally
-            {
-                File.Delete(path);
-            }
+        [Fact]
+        public void WritesACopyAndLeavesTheOriginalUntouched()
+        {
+            var path = CreateJpeg("lion.jpg");
+            var originalBytes = File.ReadAllBytes(path);
+            var copy = Path.Combine(_folder, "tagged", "big-cats", "lion.jpg");
+            var tags = new List<string> { "Wildlife", "Lion" };
+
+            ImageMetadataWriter.WriteMetadata(path, tags, copy);
+
+            Assert.Equal(originalBytes, File.ReadAllBytes(path));
+            Assert.Equal(tags, ReadKeywords(copy).Iptc);
+            Assert.Equal(new[] { copy }, Directory.GetFiles(Path.GetDirectoryName(copy)!));
+        }
+
+        [Fact]
+        public void LeavesNoTemporaryFileWhenTheImageCannotBeRead()
+        {
+            var path = Path.Combine(_folder, "broken.jpg");
+            File.WriteAllText(path, "not an image");
+
+            Assert.Throws<InvalidOperationException>(
+                () => ImageMetadataWriter.WriteMetadata(path, new List<string> { "Lion" }));
+
+            Assert.Equal("not an image", File.ReadAllText(path));
+            Assert.Equal(new[] { path }, Directory.GetFiles(_folder));
         }
     }
 }

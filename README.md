@@ -37,8 +37,10 @@ accepts (`.jpg`, `.jpeg`, `.png`, `.tiff`), collects tags from two sources:
 
 `ImageMetadataWriter` then opens the image with Magick.NET, clears the existing IPTC Keyword values
 and the existing `rdf:Bag` under XMP `dc:subject`, writes the merged list into both, and saves the
-file in place. XMP is edited as an `XDocument`; an image with no XMP gets a new packet with an
-`rdf:Description` to hold the subjects.
+result to a temporary file in the same folder. Only once that save has succeeded is the temporary
+file moved over the target (`File.Replace`), so a crash or a full disk part-way through leaves the
+original intact rather than truncated. XMP is edited as an `XDocument`; an image with no XMP gets a
+new packet with an `rdf:Description` to hold the subjects.
 
 If Azure or the write fails for an image, the error is printed, that file is left as it was, and the
 run carries on; the exit code is non-zero when anything was skipped.

@@ -7,27 +7,55 @@ namespace MetadataTaggingAI
     {
         private const string XmpPacketId = "W5M0MpCehiHzreSzNTczkc9d";
 
-        public static void WriteMetadata(string imagePath, List<string> tags)
+        // Writes the tags into the image at destinationPath, or back into imagePath when no
+        // destination is given. The new file is written to a temporary file in the destination's
+        // folder and then moved over the destination, so a failure part-way through never leaves a
+        // truncated image behind.
+        public static void WriteMetadata(string imagePath, List<string> tags, string? destinationPath = null)
         {
+            var destination = Path.GetFullPath(destinationPath ?? imagePath);
+            var directory = Path.GetDirectoryName(destination)!;
+            var tempPath = Path.Combine(directory, $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
+
             try
             {
-                // Read image with metadata preservation
                 using var image = new MagickImage();
                 var readSettings = new MagickReadSettings();
                 readSettings.SetDefine("profile:preserve", "true");
                 image.Read(imagePath, readSettings);
 
-                // Update metadata
                 HandleIptcMetadata(image, tags);
                 HandleXmpMetadata(image, tags);
 
-                // Write with metadata preservation
+                // The temporary name has no image extension, so the format is passed explicitly.
                 image.Settings.SetDefine("profile:preserve", "true");
-                image.Write(imagePath);
+                Directory.CreateDirectory(directory);
+                image.Write(tempPath, image.Format);
+
+                if (File.Exists(destination))
+                    File.Replace(tempPath, destination, destinationBackupFileName: null);
+                else
+                    File.Move(tempPath, destination);
             }
             catch (Exception ex)
             {
+                TryDelete(tempPath);
                 throw new InvalidOperationException($"Metadata write failed for {imagePath}", ex);
+            }
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // Best effort: the original file is already untouched, which is what matters.
+            }
+            catch (UnauthorizedAccessException)
+            {
             }
         }
 
