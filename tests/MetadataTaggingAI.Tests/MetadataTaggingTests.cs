@@ -58,6 +58,8 @@ namespace MetadataTaggingAI.Tests
         [InlineData("scan.tiff", true)]
         [InlineData("document.txt", false)]
         [InlineData("image.webp", false)]
+        [InlineData("animation.gif", false)]
+        [InlineData("bitmap.bmp", false)]
         public void CorrectlyIdentifiesImageFiles(string filename, bool expected)
         {
             Assert.Equal(expected, FolderTagExtractor.IsImageFile(filename));

@@ -7,7 +7,9 @@ namespace MetadataTaggingAI
     {
         private static readonly char[] Separators = { '-', '+', '_', '.' };
 
-        private static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".bmp" };
+        // Formats that can carry IPTC and XMP. GIF and BMP are left out: BMP has nowhere to store
+        // either, and re-saving an animated GIF keeps only its first frame.
+        private static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".tiff" };
 
         // The root folder's own name and every folder between it and the image become tags.
         // Each folder name is split on - + _ . and title-cased, so "big-cats" gives "Big" and "Cats".

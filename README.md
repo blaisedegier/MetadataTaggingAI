@@ -26,7 +26,7 @@ Two small tools sit beside it:
 ## How it works
 
 `Program` walks the root folder recursively and, for each file `FolderTagExtractor.IsImageFile`
-accepts (`.jpg`, `.jpeg`, `.png`, `.gif`, `.tiff`, `.bmp`), collects tags from two sources:
+accepts (`.jpg`, `.jpeg`, `.png`, `.tiff`), collects tags from two sources:
 
 - `FolderTagExtractor.GetFolderHierarchyTags` takes the path relative to the root, prepends the
   root folder's own name, splits each folder name on `-`, `+`, `_` and `.`, and title-cases the
@@ -101,9 +101,9 @@ that writes keywords into a generated JPEG and reads them back. None of them cal
   originals.
 - **Files are re-encoded.** Magick.NET decodes and re-saves each image, so JPEGs go through a
   second lossy compression and the file bytes change even where the picture looks the same.
-- Only JPEG has been exercised end to end. Whether IPTC and XMP survive in PNG, GIF, TIFF and BMP
-  depends on what ImageMagick writes for each format; BMP has nowhere to store them, and an
-  animated GIF is read as its first frame only.
+- Only JPEG has been exercised end to end. Whether IPTC and XMP survive in PNG and TIFF depends on
+  what ImageMagick writes for each format. GIF and BMP files are skipped, because BMP has nowhere to
+  store keywords and re-saving an animated GIF would keep only its first frame.
 - Compatibility with Lightroom, Bridge or other photo managers has not been tested.
 - Writes need an Azure AI Vision resource, and every image is one billable call. Tags are requested in
   the service's default language (English), and no confidence threshold is applied.
