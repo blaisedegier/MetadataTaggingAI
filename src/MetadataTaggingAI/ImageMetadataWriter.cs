@@ -1,7 +1,7 @@
 ﻿using ImageMagick;
 using System.Xml.Linq;
 
-namespace PrototypeV1
+namespace MetadataTaggingAI
 {
     public static class ImageMetadataWriter
     {
@@ -45,7 +45,7 @@ namespace PrototypeV1
             image.SetProfile(updatedXmp);
         }
 
-        private static void UpdateIptcTags(IIptcProfile iptc, List<string> tags)
+        internal static void UpdateIptcTags(IIptcProfile iptc, List<string> tags)
         {
             iptc.Values
                 .Where(v => v.Tag == IptcTag.Keyword)

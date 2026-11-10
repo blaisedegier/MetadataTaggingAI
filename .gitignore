@@ -397,7 +397,6 @@ FodyWeavers.xsd
 # JetBrains Rider
 *.sln.iml
 
-# Project Specific
-sample-shoot.zip
+# Local images and secrets (see appsettings.example.json)
 Images/
 appsettings.json
